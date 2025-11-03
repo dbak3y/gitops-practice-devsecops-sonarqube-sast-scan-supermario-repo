@@ -95,12 +95,13 @@ jobs:
  
       - name: Update Deployment YAML
         run: |
-          git pull
+          git fetch origin main
+          git checkout main
+          git pull origin main --rebase || true
           sed -i "s|image: dbak3y/supermariogitopsproject:.*$|image: dbak3y/supermariogitopsproject:${{ env.VERSION }}|" deployment.yaml
           echo ${{ env.VERSION }} > version.txt
           CURRENT_VERSION=$(cat version.txt)
           git add deployment.yaml version.txt
           git commit -m "Updated deployment yaml and version txt file with supermario image tag to ${CURRENT_VERSION}"
-          git push 
+          git push origin main --force
 
-          
