@@ -13,7 +13,7 @@ spec:
         app: supermariogame
     spec:
       containers:
-      - image: dbak3y/supermariogitopsproject:10
+      - image: dbak3y/supermariogitopsproject:12
         name: supermariogame-container
         ports:
         - containerPort: 8080
