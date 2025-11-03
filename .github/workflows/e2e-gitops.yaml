@@ -55,6 +55,15 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
+
+      - name: Set VERSION
+        id: version
+        run: |
+          if [ ! -f version.txt ]; then echo 0 > version.txt; fi
+          VERSION=$(( $(cat version.txt) + 1 ))
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "New version: $VERSION"
+
  
       - name: Login to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
@@ -93,5 +102,4 @@ jobs:
           git add deployment.yaml version.txt
           git commit -m "Updated deployment yaml and version txt file with supermario image tag to ${CURRENT_VERSION}"
           git push 
-
           
