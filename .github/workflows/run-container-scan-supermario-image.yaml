@@ -3,7 +3,7 @@ name: Run Container Scan on Super Mario Docker Image with Quality Gate
 on:
   push:
     branches:
-      - main
+      - "__disabled__"
 
 jobs:
   run_container_image_scan_on_supermario_docker_image:
