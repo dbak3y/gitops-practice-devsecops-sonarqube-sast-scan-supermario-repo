@@ -17,14 +17,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set VERSION
+      - name: Read and bump VERSION
         id: setver
         shell: bash
         run: |
-          set -e
-          v=$(cat version.txt)
-          v=$((v+1))
+          set -euo pipefail
+          if [ ! -f version.txt ]; then
+            echo "version.txt not found"
+            exit 1
+          fi
+
+          raw=$(cat version.txt | tr -d '[:space:]')
+          if ! [[ "$raw" =~ ^[0-9]+$ ]]; then
+            echo "version.txt must contain only a number. Found: '$raw'"
+            exit 1
+          fi
+
+          v=$((raw + 1))
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Next VERSION will be: $v"
 
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@master
@@ -37,37 +48,62 @@ jobs:
     needs: sonarqube_sast_scan
     env:
       VERSION: ${{ needs.sonarqube_sast_scan.outputs.version }}
+      IMAGE: docker.io/dbakeytest/supermariogitopsproject
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Verify VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "VERSION=$VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "VERSION is empty, stopping."
+            exit 1
+          fi
+
       - name: Login to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Build and Push Docker Image
+        shell: bash
         run: |
-          echo "VERSION=$VERSION"
-          docker build -t docker.io/dbakeytest/supermariogitopsproject:${VERSION} .
-          docker push docker.io/dbakeytest/supermariogitopsproject:${VERSION}
+          set -euo pipefail
+          docker build -t "${IMAGE}:${VERSION}" .
+          docker push "${IMAGE}:${VERSION}"
 
   run_container_image_scan_on_supermario_docker_image:
     runs-on: ubuntu-latest
     needs: build_push_supermario_docker_image
     env:
       VERSION: ${{ needs.sonarqube_sast_scan.outputs.version }}
+      IMAGE: docker.io/dbakeytest/supermariogitopsproject
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Verify VERSION
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "VERSION=$VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "VERSION is empty, stopping."
+            exit 1
+          fi
+
       - name: Login to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Get Docker Image from Docker Hub
+        shell: bash
         run: |
-          docker pull docker.io/dbakeytest/supermariogitopsproject:${VERSION}
-          docker save -o supermariolatestdockerimage.tar docker.io/dbakeytest/supermariogitopsproject:${VERSION}
+          set -euo pipefail
+          docker pull "${IMAGE}:${VERSION}"
+          docker save -o supermariolatestdockerimage.tar "${IMAGE}:${VERSION}"
 
       - name: Run Trivy vulnerability scanner in tarball mode
         uses: aquasecurity/trivy-action@master
@@ -87,6 +123,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set Git Config
         run: |
@@ -94,10 +131,18 @@ jobs:
           git config --global user.name "${{ secrets.GIT_USERNAME }}"
 
       - name: Update Deployment YAML and version.txt
+        shell: bash
         run: |
-          set -e
-          sed -i "s|image: dbakeytest/supermariogitopsproject:.*$|image: dbakeytest/supermariogitopsproject:${VERSION}|" deployment.yaml
+          set -euo pipefail
+
+          if [ -z "$VERSION" ]; then
+            echo "VERSION is empty, stopping."
+            exit 1
+          fi
+
+          sed -i -E "s|(image:\s*dbakeytest/supermariogitopsproject:).*|\1${VERSION}|" deployment.yaml
           echo "${VERSION}" > version.txt
+
           git add deployment.yaml version.txt
           git commit -m "Update deployment and version to ${VERSION}" || echo "No changes to commit"
           git push
