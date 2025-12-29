@@ -1,116 +1,95 @@
 name: "Run SAST, Build and push supermario image, scan image, Update deployment and version files"
-
+ 
 on:
   push:
     branches:
       - main
-
+ 
+env:
+  VERSION: $(( $(cat version.txt) + 1 ))
+  
 jobs:
-  get_version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.setver.outputs.version }}
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Compute VERSION from version.txt
-        id: setver
-        shell: bash
-        run: |
-          set -euo pipefail
-          raw=$(tr -d '[:space:]' < version.txt)
-          if ! [[ "$raw" =~ ^[0-9]+$ ]]; then
-            echo "version.txt must contain only a number. Found: '$raw'"
-            exit 1
-          fi
-          v=$((raw + 1))
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "Computed VERSION=$v"
-
+ 
   sonarqube_sast_scan:
     runs-on: ubuntu-latest
-    needs: get_version
+ 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-
+          fetch-depth: 0  # Shallow clones should be disabled for better analysis relevance
+ 
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@master
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-
+      # If you wish to fail your job when the Quality Gate is red, uncomment the
+      # following lines. This would typically be used to fail a deployment.
+      # - name: SonarQube Quality Gate Check
+      #   uses: sonarsource/sonarqube-quality-gate-action@master
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  
   build_push_supermario_docker_image:
     runs-on: ubuntu-latest
-    needs: [sonarqube_sast_scan, get_version]
-    env:
-      VERSION: ${{ needs.get_version.outputs.version }}
-      IMAGE: docker.io/dbakeytest/supermariogitopsproject
+    needs: sonarqube_sast_scan
+ 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Verify VERSION
-        run: |
-          echo "VERSION=$VERSION"
-          test -n "$VERSION"
-
+  
       - name: Login to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
+ 
       - name: Build and Push Docker Image
         run: |
-          docker build -t "${IMAGE}:${VERSION}" .
-          docker push "${IMAGE}:${VERSION}"
-
+          docker build -t docker.io/dbakeytest/supermariogitopsproject:${{ env.VERSION }} .
+          docker push docker.io/dbakeytest/supermariogitopsproject:${{ env.VERSION }}
+ 
   run_container_image_scan_on_supermario_docker_image:
     runs-on: ubuntu-latest
-    needs: [build_push_supermario_docker_image, get_version]
-    env:
-      VERSION: ${{ needs.get_version.outputs.version }}
-      IMAGE: docker.io/dbakeytest/supermariogitopsproject
+    needs: build_push_supermario_docker_image	
+ 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
+ 
       - name: Login to Docker Hub
         run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-      - name: Pull and save image
+        
+      - name: Get Docker Image from Docker Hub
         run: |
-          docker pull "${IMAGE}:${VERSION}"
-          docker save -o supermariolatestdockerimage.tar "${IMAGE}:${VERSION}"
-
+          docker pull docker.io/dbakeytest/supermariogitopsproject:${{ env.VERSION }}
+          docker save -o supermariolatestdockerimage.tar docker.io/dbakeytest/supermariogitopsproject:${{ env.VERSION }}
+     
       - name: Run Trivy vulnerability scanner in tarball mode
         uses: aquasecurity/trivy-action@master
         with:
           input: /github/workspace/supermariolatestdockerimage.tar
-          exit-code: "0"
-          severity: "CRITICAL,HIGH"
-
+          exit-code: '0'
+          severity: 'CRITICAL,HIGH'
+          
   update_k8s_yaml_version_file_with_latest_image_tag:
     runs-on: ubuntu-latest
-    needs: [run_container_image_scan_on_supermario_docker_image, get_version]
-    env:
-      VERSION: ${{ needs.get_version.outputs.version }}
+    needs: run_container_image_scan_on_supermario_docker_image
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+ 
       - name: Set Git Config
         run: |
-          git config --global user.email "${{ secrets.GIT_EMAIL }}"
-          git config --global user.name "${{ secrets.GIT_USERNAME }}"
-
-      - name: Update Deployment YAML and version.txt
+           git config --global user.email "${{ secrets.GIT_EMAIL}}"
+           git config --global user.name "${{ secrets.GIT_USERNAME}}"
+ 
+      - name: Update Deployment YAML
         run: |
-          sed -i -E "s|(image:\s*dbakeytest/supermariogitopsproject:).*|\1${VERSION}|" deployment.yaml
-          echo "${VERSION}" > version.txt
+          git pull
+          sed -i "s|image: dbakeytest/supermariogitopsproject:.*$|image: dbakeytest/supermariogitopsproject:${{ env.VERSION }}|" deployment.yaml
+          echo ${{ env.VERSION }} > version.txt
+          CURRENT_VERSION=$(cat version.txt)
           git add deployment.yaml version.txt
-          git commit -m "Updated deployment and version to ${VERSION}" || echo "No changes to commit"
-          git push
+          git commit -m "Updated deployment yaml and version txt file with supermario image tag to ${CURRENT_VERSION}"
+          git push 
